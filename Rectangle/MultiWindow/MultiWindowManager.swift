@@ -28,6 +28,12 @@ class MultiWindowManager {
         case .tileActiveApp:
             tileActiveAppWindowsOnScreen(windowElement: parameters.windowElement)
             return true
+        case .focusLayoutNext:
+            focusLayoutOnScreen(windowElement: parameters.windowElement, direction: .next)
+            return true
+        case .focusLayoutPrev:
+            focusLayoutOnScreen(windowElement: parameters.windowElement, direction: .prev)
+            return true
         default:
             return false
         }
@@ -213,5 +219,95 @@ class MultiWindowManager {
             let row = ind / Int(columns)
             tileWindow(w, screenFrame: screenFrame, size: size, column: column, row: row)
         }
+    }
+
+    // MARK: Focus Layout
+
+    private static var focusedPid: pid_t?
+
+    private enum CycleDirection {
+        case next, prev
+    }
+
+    private static func focusLayoutOnScreen(windowElement: AccessibilityElement? = nil, direction: CycleDirection) {
+        guard let (screens, windows) = allWindowsOnScreen(windowElement: windowElement, sortByPID: true)
+        else {
+            return
+        }
+
+        let rawFrame = screens.currentScreen.adjustedVisibleFrame().screenFlipped
+        let focusRatio: CGFloat = 0.7
+        let gap: CGFloat = 15.0
+
+        // Inset the screen frame by the gap on all sides
+        let screenFrame = CGRect(
+            x: rawFrame.origin.x + gap,
+            y: rawFrame.origin.y + gap,
+            width: rawFrame.width - gap * 2,
+            height: rawFrame.height - gap * 2
+        )
+
+        // Build ordered list of unique PIDs
+        var uniquePids = [pid_t]()
+        for w in windows {
+            if let pid = w.pid, !uniquePids.contains(pid) {
+                uniquePids.append(pid)
+            }
+        }
+
+        guard !uniquePids.isEmpty else { return }
+
+        // Determine which PID gets focus
+        let resolvedPid: pid_t
+        if let currentFocus = focusedPid,
+           let currentIndex = uniquePids.firstIndex(of: currentFocus) {
+            // Cycle in the requested direction
+            let offset = direction == .next ? 1 : uniquePids.count - 1
+            let nextIndex = (currentIndex + offset) % uniquePids.count
+            resolvedPid = uniquePids[nextIndex]
+        } else {
+            // First press or focusedPid gone — use frontmost app
+            let frontPid = AccessibilityElement.getFrontWindowElement()?.pid
+            resolvedPid = frontPid ?? uniquePids[0]
+        }
+
+        focusedPid = resolvedPid
+
+        // Split windows by focus
+        let focusWindows = windows.filter { $0.pid == resolvedPid }
+        let otherWindows = windows.filter { $0.pid != resolvedPid }
+
+        // Left zone: 70% width, full height — tile focus app windows vertically
+        let leftWidth = screenFrame.width * focusRatio - gap / 2
+        let focusCount = max(focusWindows.count, 1)
+        let focusHeight = screenFrame.height / CGFloat(focusCount)
+
+        for (i, w) in focusWindows.enumerated() {
+            let rect = CGRect(
+                x: screenFrame.origin.x,
+                y: screenFrame.origin.y + focusHeight * CGFloat(i),
+                width: leftWidth,
+                height: focusHeight
+            )
+            w.setFrame(rect)
+        }
+
+        // Right zone: remaining width — all windows get full height
+        guard !otherWindows.isEmpty else { return }
+        let rightX = screenFrame.origin.x + leftWidth + gap
+        let rightWidth = screenFrame.width - leftWidth - gap
+
+        for w in otherWindows {
+            let rect = CGRect(
+                x: rightX,
+                y: screenFrame.origin.y,
+                width: rightWidth,
+                height: screenFrame.height
+            )
+            w.setFrame(rect)
+        }
+
+        // Bring the focused app to front
+        focusWindows.first?.bringToFront()
     }
 }
