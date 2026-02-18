@@ -59,9 +59,25 @@ class MultiWindowManager {
             })
         }
 
+        // Build a lookup of visible window IDs from the window server.
+        // Filter by layer == 0 (normal windows) and alpha > 0 (not fully
+        // transparent) to exclude system overlays, menus, and ghost windows.
+        let onScreenWindows = WindowUtil.getWindowList()
+        var visibleWindowIds = Set<CGWindowID>()
+        for info in onScreenWindows {
+            if info.level == 0 && info.alpha > 0
+                && info.frame.width > 0 && info.frame.height > 0 {
+                visibleWindowIds.insert(info.id)
+            }
+        }
+
         var actualWindows = [AccessibilityElement]()
         for w in windows {
             if Defaults.todo.userEnabled, TodoManager.isTodoWindow(w) { continue }
+            let wFrame = w.frame
+            if wFrame.isNull || wFrame.width <= 0 || wFrame.height <= 0 { continue }
+            // Only include windows present in the window server's visible list
+            guard let wId = w.windowId, visibleWindowIds.contains(wId) else { continue }
             let screen = screenDetection.detectScreens(using: w)?.currentScreen
             if screen == currentScreen,
                w.isWindow == true,
@@ -273,26 +289,30 @@ class MultiWindowManager {
 
         focusedPid = resolvedPid
 
-        // Split windows by focus
-        let focusWindows = windows.filter { $0.pid == resolvedPid }
-        let otherWindows = windows.filter { $0.pid != resolvedPid }
+        // Split windows: only the largest window of the focused app gets the
+        // left zone. Any extra windows from the same app (helper/utility windows)
+        // go to the right stack with the other apps' windows.
+        let allFocusWindows = windows.filter { $0.pid == resolvedPid }
+        let primaryWindow = allFocusWindows.max(by: {
+            let a = $0.frame; let b = $1.frame
+            return (a.width * a.height) < (b.width * b.height)
+        })
+        let otherWindows = windows.filter { $0 != primaryWindow }
 
-        // Left zone: 70% width, full height — tile focus app windows vertically
+        // Left zone: 70% width, full height — single primary window
         let leftWidth = screenFrame.width * focusRatio - gap / 2
-        let focusCount = max(focusWindows.count, 1)
-        let focusHeight = screenFrame.height / CGFloat(focusCount)
 
-        for (i, w) in focusWindows.enumerated() {
+        if let primaryWindow {
             let rect = CGRect(
                 x: screenFrame.origin.x,
-                y: screenFrame.origin.y + focusHeight * CGFloat(i),
+                y: screenFrame.origin.y,
                 width: leftWidth,
-                height: focusHeight
+                height: screenFrame.height
             )
-            w.setFrame(rect)
+            primaryWindow.setFrame(rect)
         }
 
-        // Right zone: remaining width — all windows get full height
+        // Right zone: remaining width — all other windows get full height
         guard !otherWindows.isEmpty else { return }
         let rightX = screenFrame.origin.x + leftWidth + gap
         let rightWidth = screenFrame.width - leftWidth - gap
@@ -308,6 +328,6 @@ class MultiWindowManager {
         }
 
         // Bring the focused app to front
-        focusWindows.first?.bringToFront()
+        primaryWindow?.bringToFront()
     }
 }

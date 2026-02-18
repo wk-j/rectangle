@@ -19,8 +19,8 @@ tucked away — must trigger multiple shortcuts manually, one per window.
 2. The **frontmost app** gets **70% of the screen width** on the left.
 3. All **other windows** are **stacked vertically** in the remaining 30% on the right.
 4. **Two shortcuts for cycling** the focused app through all visible apps:
-   - `Cmd+Shift+>` — cycle forward (next app becomes focus).
-   - `Cmd+Shift+<` — cycle backward (previous app becomes focus).
+   - `Ctrl+Shift+)` — cycle forward (next app becomes focus).
+   - `Ctrl+Shift+(` — cycle backward (previous app becomes focus).
 5. Layout is **hardcoded** — no configuration UI, no saved layouts, no data model.
 6. Works like `tileAll` / `cascadeAll` — new `WindowAction` enum cases routed through
    `MultiWindowManager`.
@@ -39,7 +39,7 @@ tucked away — must trigger multiple shortcuts manually, one per window.
 |---|---|
 | `WindowAction` enum (highest raw value: 91) | Each case = one action with shortcut, name, dispatch |
 | `MultiWindowManager.execute()` | Routes multi-window actions; returns `true` if handled |
-| `MultiWindowManager.allWindowsOnScreen()` | Enumerates visible windows on current screen |
+| `MultiWindowManager.allWindowsOnScreen()` | Enumerates visible windows on current screen; cross-references with CGWindowList filtering by layer 0, alpha > 0, and non-zero size to exclude ghost windows |
 | `AccessibilityElement` | AX wrapper: `setFrame()`, `bringToFront()`, `pid`, `frame` |
 | `ShortcutManager` | Subscribes to all `WindowAction` notification names |
 
@@ -79,17 +79,17 @@ Add both to `WindowAction.active` array (at the end, after `tileActiveApp`).
 
 ```swift
 // In alternateDefault (Rectangle defaults):
-case .focusLayoutNext: return Shortcut( cmd|shift, kVK_ANSI_Period )  // Cmd+Shift+>
-case .focusLayoutPrev: return Shortcut( cmd|shift, kVK_ANSI_Comma )  // Cmd+Shift+<
+case .focusLayoutNext: return Shortcut( ctrl|shift, kVK_ANSI_0 )  // Ctrl+Shift+)
+case .focusLayoutPrev: return Shortcut( ctrl|shift, kVK_ANSI_9 )  // Ctrl+Shift+(
 
 // In spectacleDefault:
-case .focusLayoutNext: return Shortcut( cmd|shift, kVK_ANSI_Period )  // same
-case .focusLayoutPrev: return Shortcut( cmd|shift, kVK_ANSI_Comma )  // same
+case .focusLayoutNext: return Shortcut( ctrl|shift, kVK_ANSI_0 )  // same
+case .focusLayoutPrev: return Shortcut( ctrl|shift, kVK_ANSI_9 )  // same
 ```
 
-- `kVK_ANSI_Period` (`0x2F`) = `.` key. With Shift held, types `>`.
-- `kVK_ANSI_Comma` (`0x2B`) = `,` key. With Shift held, types `<`.
-- `Cmd+Shift` is not used by any existing Rectangle shortcut, so no conflicts.
+- `kVK_ANSI_0` (`0x1D`) = `0` key. With Shift held, types `)`.
+- `kVK_ANSI_9` (`0x19`) = `9` key. With Shift held, types `(`.
+- `Ctrl+Shift` is not used by any existing Rectangle shortcut, so no conflicts.
 
 ### MultiWindowManager Routing
 
@@ -127,8 +127,8 @@ private enum CycleDirection {
 
 This means:
 - **First press (either direction):** Frontmost app goes to left 70%, others stack right.
-- **Subsequent `Cmd+Shift+>`:** Next app rotates into the left 70%.
-- **Subsequent `Cmd+Shift+<`:** Previous app rotates into the left 70%.
+- **Subsequent `Ctrl+Shift+)`:** Next app rotates into the left 70%.
+- **Subsequent `Ctrl+Shift+(`:** Previous app rotates into the left 70%.
 - Wraps around circularly in both directions.
 
 ### Layout Algorithm
@@ -175,26 +175,29 @@ static func focusLayoutOnScreen(windowElement: AccessibilityElement? = nil, dire
 
     focusedPid = resolvedPid
 
-    // Split windows by focus
-    let focusWindows = windows.filter { $0.pid == resolvedPid }
-    let otherWindows = windows.filter { $0.pid != resolvedPid }
+    // Split windows: only the largest window of the focused app gets the
+    // left zone. Extra windows (helper/utility) go to the right stack.
+    let allFocusWindows = windows.filter { $0.pid == resolvedPid }
+    let primaryWindow = allFocusWindows.max(by: {
+        let a = $0.frame; let b = $1.frame
+        return (a.width * a.height) < (b.width * b.height)
+    })
+    let otherWindows = windows.filter { $0 != primaryWindow }
 
-    // Left zone: 70% width, full height — tile focus app windows vertically
+    // Left zone: 70% width, full height — single primary window
     let leftWidth = screenFrame.width * focusRatio
-    let focusCount = max(focusWindows.count, 1)
-    let focusHeight = screenFrame.height / CGFloat(focusCount)
 
-    for (i, w) in focusWindows.enumerated() {
+    if let primaryWindow {
         let rect = CGRect(
             x: screenFrame.origin.x,
-            y: screenFrame.origin.y + focusHeight * CGFloat(i),
+            y: screenFrame.origin.y,
             width: leftWidth,
-            height: focusHeight
+            height: screenFrame.height
         )
-        w.setFrame(rect)
+        primaryWindow.setFrame(rect)
     }
 
-    // Right zone: 30% width — stack other windows vertically
+    // Right zone: 30% width — all other windows stacked
     guard !otherWindows.isEmpty else { return }
     let rightX = screenFrame.origin.x + leftWidth
     let rightWidth = screenFrame.width - leftWidth
@@ -211,7 +214,7 @@ static func focusLayoutOnScreen(windowElement: AccessibilityElement? = nil, dire
     }
 
     // Bring the focused app to front
-    focusWindows.first?.bringToFront()
+    primaryWindow?.bringToFront()
 }
 ```
 
@@ -221,27 +224,27 @@ Given 3 apps on screen: **Xcode** (PID 100), **Safari** (PID 200), **Terminal** 
 Xcode is frontmost.
 
 ```
-Cmd+Shift+> (first press):
+Ctrl+Shift+) (first press):
   focusedPid = nil -> use frontmost Xcode (100)
   Layout: [Xcode 70%] [Safari | Terminal 30%]
 
-Cmd+Shift+> (second press):
+Ctrl+Shift+) (second press):
   focusedPid = 100 -> next -> Safari (200)
   Layout: [Safari 70%] [Xcode | Terminal 30%]
 
-Cmd+Shift+> (third press):
+Ctrl+Shift+) (third press):
   focusedPid = 200 -> next -> Terminal (300)
   Layout: [Terminal 70%] [Xcode | Safari 30%]
 
-Cmd+Shift+> (fourth press):
+Ctrl+Shift+) (fourth press):
   focusedPid = 300 -> next -> wraps to Xcode (100)
   Layout: [Xcode 70%] [Safari | Terminal 30%]
 
-Cmd+Shift+< (reverse):
+Ctrl+Shift+( (reverse):
   focusedPid = 100 -> prev -> Terminal (300)
   Layout: [Terminal 70%] [Xcode | Safari 30%]
 
-Cmd+Shift+< (again):
+Ctrl+Shift+( (again):
   focusedPid = 300 -> prev -> Safari (200)
   Layout: [Safari 70%] [Xcode | Terminal 30%]
 ```
@@ -275,8 +278,9 @@ kebab-case automatically.
 | Only front app windows, no others | Front app tiles in left 70%; right 30% empty; no cycling |
 | No front window detected | `guard` fails, early return (same as `tileAll`) |
 | Many other windows (e.g., 20) | Each gets a thin horizontal slice in the right 30% |
-| Front app has multiple windows | All tiled vertically in the left 70% |
+| Front app has multiple windows | Only the largest window gets the left 70%; extra windows (helper/utility) go to the right stack |
 | Minimized/hidden/sheet windows | Filtered out by `allWindowsOnScreen()` (existing behavior) |
+| Zero-size / invisible windows | Filtered out by `allWindowsOnScreen()` — AX windows must match a CGWindowList entry with layer 0 (normal window level), alpha > 0 (not fully transparent), and non-zero frame size |
 | App quit while focused | `focusedPid` no longer in PID list; falls back to frontmost app |
 | New app launched between presses | Appears in PID list; naturally joins the cycle |
 

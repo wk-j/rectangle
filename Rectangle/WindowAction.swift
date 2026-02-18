@@ -461,8 +461,8 @@ enum WindowAction: Int, Codable {
         case .topLeft: return Shortcut( ctrl|cmd, kVK_LeftArrow )
         case .topRight: return Shortcut( ctrl|cmd, kVK_RightArrow )
         case .restore: return Shortcut( ctrl|alt, kVK_Delete)
-        case .focusLayoutNext: return Shortcut( cmd|shift, kVK_ANSI_Period )
-        case .focusLayoutPrev: return Shortcut( cmd|shift, kVK_ANSI_Comma )
+        case .focusLayoutNext: return Shortcut( ctrl|shift, kVK_ANSI_0 )
+        case .focusLayoutPrev: return Shortcut( ctrl|shift, kVK_ANSI_9 )
         default: return nil
         }
     }
@@ -497,8 +497,8 @@ enum WindowAction: Int, Codable {
                 return Shortcut( ctrl|alt, kVK_ANSI_R )
             }
             return nil
-        case .focusLayoutNext: return Shortcut( cmd|shift, kVK_ANSI_Period )
-        case .focusLayoutPrev: return Shortcut( cmd|shift, kVK_ANSI_Comma )
+        case .focusLayoutNext: return Shortcut( ctrl|shift, kVK_ANSI_0 )
+        case .focusLayoutPrev: return Shortcut( ctrl|shift, kVK_ANSI_9 )
         default: return nil
         }
     }

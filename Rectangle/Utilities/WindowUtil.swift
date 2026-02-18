@@ -45,7 +45,15 @@ class WindowUtil {
                 if let rawProcessName {
                     processName = String(rawProcessName)
                 }
-                let info = WindowInfo(id: id, level: level, frame: frame, pid: pid, processName: processName)
+                let alpha: Float
+                let alphaKey = unsafeBitCast(kCGWindowAlpha, to: UnsafeRawPointer.self)
+                if CFDictionaryContainsKey(rawInfo, alphaKey) {
+                    let rawAlpha = rawInfo.getValue(kCGWindowAlpha) as CFNumber
+                    alpha = Float(truncating: rawAlpha)
+                } else {
+                    alpha = 1.0
+                }
+                let info = WindowInfo(id: id, level: level, frame: frame, pid: pid, processName: processName, alpha: alpha)
                 infos.append(info)
             }
         }
@@ -60,4 +68,5 @@ struct WindowInfo {
     let frame: CGRect
     let pid: pid_t
     let processName: String?
+    let alpha: Float
 }
